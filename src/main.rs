@@ -8,6 +8,7 @@ mod util;
 
 use etcetera::BaseStrategy;
 use rust_embed::RustEmbed;
+use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process;
@@ -156,11 +157,20 @@ fn cli() -> clap::Command {
                 ),
         )
         .subcommand(
-            Command::new("preview").about("Preview a given theme").arg(
-                Arg::new("theme")
-                    .help("Name of the color theme")
-                    .action(ArgAction::Set),
-            ),
+            Command::new("preview")
+                .about("Preview a given theme")
+                .arg(
+                    Arg::new("brief")
+                        .long("brief")
+                        .short('b')
+                        .action(ArgAction::SetTrue)
+                        .help("Print one line per filetype"),
+                )
+                .arg(
+                    Arg::new("theme")
+                        .help("Name of the color theme")
+                        .action(ArgAction::Set),
+                ),
         )
         .subcommand(Command::new("themes").about("Prints list of available themes"))
 }
@@ -205,19 +215,33 @@ fn run() -> Result<()> {
     } else if let Some(sub_matches) = matches.subcommand_matches("preview") {
         let theme = load_theme(sub_matches, &user_config_path, color_mode)?;
 
-        let mut grouped_by_category = sorted_pairs.clone();
-        grouped_by_category.sort_by_key(|(_, category)| *category);
+        let mut grouped_by_category = BTreeMap::<_, Vec<_>>::new();
+        for (filetype, category) in sorted_pairs.clone() {
+            grouped_by_category
+                .entry(category)
+                .or_default()
+                .push(filetype);
+        }
 
-        for (filetype, category) in grouped_by_category {
+        for (category, filetypes) in grouped_by_category {
             let ansi_code = theme.get_style(category).unwrap_or_else(|_| "0".into());
-            writeln!(
-                stdout_lock,
-                "{}: \x1b[{}m{}\x1b[0m",
-                category.join("."),
-                ansi_code,
-                filetype
-            )
-            .ok();
+            let category_name = category.join(".");
+
+            if sub_matches.get_flag("brief") {
+                write!(stdout_lock, "{category_name}:").ok();
+                for filetype in filetypes {
+                    write!(stdout_lock, " \x1b[{ansi_code}m{filetype}\x1b[0m").ok();
+                }
+                writeln!(stdout_lock, "").ok();
+            } else {
+                for filetype in filetypes {
+                    writeln!(
+                        stdout_lock,
+                        "{category_name}: \x1b[{ansi_code}m{filetype}\x1b[0m"
+                    )
+                    .ok();
+                }
+            }
         }
     } else if matches.subcommand_matches("themes").is_some() {
         for theme in available_theme_names(&user_config_path)? {
